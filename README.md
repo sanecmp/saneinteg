@@ -112,8 +112,9 @@ EUID/prctl operations, or close actual windows. For isolated verification of
 put the latter on `PATH`; do not replace the user's installed tools during tests.
 
 Integration checks remain separate from component unit tests. The dedicated
-GitHub Actions workflow is started explicitly with `workflow_dispatch` and checks
-the pinned submodule revisions.
+GitHub Actions workflow runs on pushes to `main` and pull requests targeting
+`main`, checks the pinned submodule revisions, and can also be started manually
+with `workflow_dispatch`.
 
 ## Component checks and builds
 
