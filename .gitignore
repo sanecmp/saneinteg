@@ -1,0 +1,27 @@
+# Local verification backups and application metadata.
+/.devcheck/
+/.agents/
+/.codex/
+/.aws/
+
+# Development environments, generated files and local state.
+**/uv.lock
+.venv*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env*
+!/.env.example
+.state/
+*.log
+*.sqlite3
+*.sqlite3-*
+*.key
+*.pem
+*.p12
+*.pfx

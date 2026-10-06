@@ -1,0 +1,27 @@
+[project]
+name = "saneinteg"
+version = "0.1.0"
+description = "Reusable end-to-end development checks for sanecmp"
+requires-python = ">=3.12"
+dependencies = [
+    "sanea",
+    "sanex",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+sanea = { path = "components/sanea", editable = true }
+sanex = { path = "components/sanex", editable = true }
+sanelib = { path = "components/sanelib", editable = true }
+
+[dependency-groups]
+tests = [
+    "pytest>=8,<10",
+    "pytest-djangoapp>=1.8,<2",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]

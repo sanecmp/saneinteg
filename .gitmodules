@@ -1,0 +1,9 @@
+[submodule "components/sanea"]
+	path = components/sanea
+	url = https://github.com/sanecmp/sanea.git
+[submodule "components/sanex"]
+	path = components/sanex
+	url = https://github.com/sanecmp/sanex.git
+[submodule "components/sanelib"]
+	path = components/sanelib
+	url = https://github.com/sanecmp/sanelib.git
