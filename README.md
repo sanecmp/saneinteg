@@ -10,6 +10,11 @@ a tested combination of three independently maintained components:
 Their Git submodules live in `components/`. The root uv project is only a test
 environment: saneinteg does not build or publish a Python package.
 
+The distribution names are `sanecmp-sanea`, `sanecmp-sanex` and
+`sanecmp-sanelib`. Python imports, application commands and repository names keep
+their short names. In particular, do not install the unrelated PyPI package
+named `sanex`.
+
 ## Checkout and component revisions
 
 Install Git, [uv](https://docs.astral.sh/uv/), Python 3.12 or newer, and
@@ -118,12 +123,14 @@ with `workflow_dispatch`.
 
 ## Component checks and builds
 
-Run local component tests from each package directory:
+Prepare the shared development tools once, then run local component tests from
+each package directory:
 
 ```bash
-(cd components/sanelib && ma tools && ma tests)
-(cd components/sanex && ma tools && ma tests)
-(cd components/sanea && ma tools && ma tests)
+ma tools
+(cd components/sanelib && ma tests)
+(cd components/sanex && ma tests)
+(cd components/sanea && ma tests)
 ```
 
 Component CI invokes pytest directly, without makeapp. Build releases with
@@ -132,6 +139,6 @@ and updates continue to use Python packages, not this integration repository.
 
 ## Component guides
 
-- [sanea development](components/sanea/README.md)
-- [sanex development and installation](components/sanex/README.md)
-- [shared protocol](components/sanelib/README.md)
+- [sanea development](https://github.com/sanecmp/sanea#readme)
+- [sanex development and installation](https://github.com/sanecmp/sanex#readme)
+- [shared protocol](https://github.com/sanecmp/sanelib#readme)

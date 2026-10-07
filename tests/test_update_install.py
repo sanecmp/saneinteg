@@ -146,18 +146,18 @@ def test_installs_exact_release_from_temporary_https_index(
 
 def build_wheel(directory: Path, version: str) -> Path:
     """Build a dependency-free fixture wheel without invoking project tooling."""
-    wheel = directory / f"sanex-{version}-py3-none-any.whl"
-    distribution = f"sanex-{version}.dist-info"
+    wheel = directory / f"sanecmp_sanex-{version}-py3-none-any.whl"
+    distribution = f"sanecmp_sanex-{version}.dist-info"
     files = {
         "sanex/__init__.py": "",
         "sanex/cli.py": (
             "from importlib.metadata import version\n\n"
             "def main():\n"
-            "    print(version('sanex'))\n"
+            "    print(version(\"sanecmp-sanex\"))\n"
         ),
         f"{distribution}/METADATA": (
             "Metadata-Version: 2.3\n"
-            "Name: sanex\n"
+            "Name: sanecmp-sanex\n"
             f"Version: {version}\n"
         ),
         f"{distribution}/WHEEL": (
@@ -229,7 +229,7 @@ def read_installed_version(tool_bin_dir: Path) -> str:
 
 def publish_wheel(index_root: Path, wheel: Path) -> None:
     package_directory = index_root / "packages"
-    simple_directory = index_root / "simple" / "sanex"
+    simple_directory = index_root / "simple" / "sanecmp-sanex"
     package_directory.mkdir(parents=True)
     simple_directory.mkdir(parents=True)
     published = package_directory / wheel.name

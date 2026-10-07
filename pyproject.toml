@@ -4,17 +4,17 @@ version = "0.1.0"
 description = "Reusable end-to-end development checks for sanecmp"
 requires-python = ">=3.12"
 dependencies = [
-    "sanea",
-    "sanex",
+    "sanecmp-sanea",
+    "sanecmp-sanex",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-sanea = { path = "components/sanea", editable = true }
-sanex = { path = "components/sanex", editable = true }
-sanelib = { path = "components/sanelib", editable = true }
+sanecmp-sanea = { path = "components/sanea", editable = true }
+sanecmp-sanex = { path = "components/sanex", editable = true }
+sanecmp-sanelib = { path = "components/sanelib", editable = true }
 
 [dependency-groups]
 tests = [

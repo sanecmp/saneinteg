@@ -245,7 +245,17 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
         "SANEA_DISCOVERY_PORT": f"{discovery_port}",
     })
     # Probe imports with the installed environment's interpreter, not this script's Python.
-    execute.run([python, "-c", "import sanea, sanelib, sanex; from sanelib.protocol import Config; assert Config"])
+    execute.run([
+        python, "-c",
+        "from importlib.metadata import version; "
+        "import sanea, sanelib, sanex; "
+        "from sanelib.protocol import Config; "
+        "from sanex.version import installed_version; "
+        "assert Config; "
+        "assert sanea.__version__ == version(\"sanecmp-sanea\"); "
+        "assert sanelib.VERSION == version(\"sanecmp-sanelib\"); "
+        "assert installed_version() == version(\"sanecmp-sanex\")",
+    ])
 
     for command in ("sanea", "sanex", "sanex-indicator"):
         execute.run([f"{binaries / command}", "--version"])
