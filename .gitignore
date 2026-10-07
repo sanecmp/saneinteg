@@ -3,7 +3,6 @@
 /.agents/
 /.codex/
 /.aws/
-/AGENTS.md
 vibe/
 
 # Website assets belong to their own repository; design documents are not kept here.
