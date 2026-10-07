@@ -1,14 +1,21 @@
 # saneinteg
 
 Integration checks and local development tools for sanecmp. The repository pins
-a tested combination of three independently maintained components:
+a tested combination of two independently maintained applications and their
+shared library, alongside a separately published website:
 
 - **sanea** — the parent-facing Django web application;
 - **sanex** — the system service installed on a monitored computer;
-- **sanelib** — the shared network protocol.
+- **sanelib** — the shared network protocol;
+- **landing** — the website and branding from
+  [sanecmp.github.io](https://github.com/sanecmp/sanecmp.github.io).
 
 Their Git submodules live in `components/`. The root uv project is only a test
 environment: saneinteg does not build or publish a Python package.
+
+The static website lives in `components/landing/` and is published independently
+at <https://sanecmp.github.io/>. It is not included in application builds or their
+runtime dependencies. Branding belongs to the website repository, not saneinteg.
 
 The distribution names are `sanecmp-sanea`, `sanecmp-sanex` and
 `sanecmp-sanelib`. Python imports, application commands and repository names keep

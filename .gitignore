@@ -6,7 +6,6 @@
 vibe/
 
 # Website assets belong to their own repository; design documents are not kept here.
-/landing/
 /branding/
 /docs/
 

@@ -60,7 +60,7 @@ def repository(tmp_path: Path) -> Repository:
     script.write_bytes((PROJECT_ROOT / "repoutil.sh").read_bytes())
     script.chmod(0o755)
 
-    for component in ("sanea", "sanex", "sanelib"):
+    for component in ("sanea", "sanex", "sanelib", "landing"):
         source = tmp_path / "sources" / component
         source.mkdir(parents=True)
         run_git(source, "init", "-b", "main", environment=environment)
@@ -109,8 +109,11 @@ def test_init_uses_recorded_revisions_from_an_unrelated_directory(repository: Re
     assert run_git(clone, "status", "--porcelain", environment=repository.environment) == ""
 
 
-def test_status_reports_local_changes_without_modifying_them(repository: Repository, tmp_path: Path) -> None:
-    changed_file = repository.checkout / "components" / "sanex" / "new.txt"
+@pytest.mark.parametrize("component_name", ["sanex", "landing"])
+def test_status_reports_local_changes_without_modifying_them(
+    repository: Repository, tmp_path: Path, component_name: str,
+) -> None:
+    changed_file = repository.checkout / "components" / component_name / "new.txt"
     changed_file.write_text("local change\n")
 
     result = run_repoutil(repository, "status", cwd=tmp_path)
@@ -119,6 +122,55 @@ def test_status_reports_local_changes_without_modifying_them(repository: Reposit
     assert repository.initial_revision in result.stdout
     assert "new.txt" in result.stdout
     assert changed_file.read_text() == "local change\n"
+
+
+def test_update_fetches_landing_without_staging_its_pointer(repository: Repository, tmp_path: Path) -> None:
+    source = tmp_path / "sources" / "landing"
+    initial_revision = run_git(source, "rev-parse", "HEAD", environment=repository.environment)
+    (source / "application.txt").write_text("website update\n")
+    run_git(source, "commit", "-am", "Update website", environment=repository.environment)
+    latest_revision = run_git(source, "rev-parse", "HEAD", environment=repository.environment)
+
+    result = run_repoutil(repository, "update", "landing", "origin/main", cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    component = repository.checkout / "components" / "landing"
+    assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == latest_revision
+    recorded_revision = run_git(repository.checkout, "rev-parse", ":components/landing", environment=repository.environment)
+    assert recorded_revision == initial_revision
+    assert run_git(repository.checkout, "diff", "--cached", "--name-only", environment=repository.environment) == ""
+    assert run_git(repository.checkout, "diff", "--name-only", environment=repository.environment) == "components/landing"
+
+
+@pytest.mark.parametrize("command", ["init", "update"])
+@pytest.mark.parametrize(("change", "message"), [
+    pytest.param("unstaged", "landing has local changes", id="unstaged"),
+    pytest.param("staged", "landing has local changes", id="staged"),
+    pytest.param("untracked", "landing has local changes", id="untracked"),
+    pytest.param("unpublished", "not present on origin", id="unpublished"),
+])
+def test_switching_landing_refuses_local_changes(
+    repository: Repository, tmp_path: Path, command: str, change: str, message: str,
+) -> None:
+    component = repository.checkout / "components" / "landing"
+    changed_file = component / ("new.txt" if change == "untracked" else "application.txt")
+    changed_file.write_text("local website change\n")
+
+    if change == "staged":
+        run_git(component, "add", changed_file.name, environment=repository.environment)
+
+    elif change == "unpublished":
+        run_git(component, "commit", "-am", "Unpublished website", environment=repository.environment)
+
+    current_revision = run_git(component, "rev-parse", "HEAD", environment=repository.environment)
+    arguments = ("init",) if command == "init" else ("update", "landing", "origin/main")
+
+    result = run_repoutil(repository, *arguments, cwd=tmp_path)
+
+    assert result.returncode == 1
+    assert message in result.stderr
+    assert changed_file.read_text() == "local website change\n"
+    assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == current_revision
 
 
 @pytest.mark.parametrize("revision_kind", ["branch", "tag", "commit"])

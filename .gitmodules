@@ -7,3 +7,6 @@
 [submodule "components/sanelib"]
 	path = components/sanelib
 	url = https://github.com/sanecmp/sanelib.git
+[submodule "components/landing"]
+	path = components/landing
+	url = https://github.com/sanecmp/sanecmp.github.io.git

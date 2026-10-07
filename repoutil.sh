@@ -3,13 +3,13 @@
 set -euo pipefail
 
 project_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-components=(sanea sanex sanelib)
+components=(sanea sanex sanelib landing)
 
 usage() {
     cat <<'EOF'
 Usage: repoutil.sh init
        repoutil.sh status
-       repoutil.sh update <sanea|sanex|sanelib> <revision>
+       repoutil.sh update <sanea|sanex|sanelib|landing> <revision>
 
 init    Initialize submodules at the revisions recorded in the repository.
 status  Show recorded revisions, branches and local changes.
@@ -96,7 +96,7 @@ update_component() {
     local current_revision
 
     case "$component" in
-        sanea|sanex|sanelib) ;;
+        sanea|sanex|sanelib|landing) ;;
         *) fail "Unknown component: $component" ;;
     esac
 
