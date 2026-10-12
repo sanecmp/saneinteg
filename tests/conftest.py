@@ -6,6 +6,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from django.core.management import call_command
 from pytest_djangoapp import configure_djangoapp_plugin
 
 from sanea import settings as sanea_settings
@@ -30,6 +31,12 @@ def integration_state_dir() -> Path:
     path = Path(os.environ["SANECMP_INTEGRATION_STATE_DIR"])
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def collected_static(integration_state_dir: Path) -> Path:
+    call_command("collectstatic", interactive=False, verbosity=0)
+    return Path(sanea_settings.STATIC_ROOT)
 
 
 @pytest.fixture(scope="module")

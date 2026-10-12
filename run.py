@@ -201,15 +201,36 @@ def check_listeners(http_port: int, https_port: int) -> None:
     if b"Sign in" not in body:
         raise RuntimeError("sanea HTTP listener did not render the sign-in page")
 
-    api_request = request.Request(
-        f"https://127.0.0.1:{https_port}/client/sync", data=b"{}",
-        headers={"Content-Type": "application/json"}, method="POST",
-    )
-    # The temporary test CA is not trusted; this checks the client-certificate requirement.
+    # The temporary test CA is not trusted; all listeners belong to this isolated run.
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
 
+    for base_url in (http_url, f"https://127.0.0.1:{https_port}/"):
+
+        for asset, content_type in (
+            ("sanea/css/app.css", "text/css"),
+            ("sanea/js/registration-window.js", "text/javascript"),
+            ("vendor/bootstrap/bootstrap.min.css", "text/css"),
+            ("vendor/htmx/htmx.min.js", "text/javascript"),
+            ("sanea/favicon.svg", "image/svg+xml"),
+            ("admin/css/base.css", "text/css"),
+        ):
+            try:
+
+                with request.urlopen(f"{base_url}static/{asset}", context=context, timeout=2) as response:
+
+                    if response.headers.get_content_type() != content_type or not response.read():
+                        raise RuntimeError(f"sanea did not serve static asset {asset} with the expected content type")
+
+            except error.HTTPError as response_error:
+                response_error.close()
+                raise RuntimeError(f"sanea static asset {asset} returned HTTP {response_error.code}") from response_error
+
+    api_request = request.Request(
+        f"https://127.0.0.1:{https_port}/client/sync", data=b"{}",
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
     try:
 
         with request.urlopen(api_request, context=context, timeout=2):
@@ -238,6 +259,7 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
     execute.run(["uv", "pip", "install", "--python", python, *(f"{wheel}" for wheel in sorted(wheel_dir.glob("*.whl")))])
     http_port, https_port, discovery_port = free_ports()
     environment.update({
+        "PYTHON_ENV": "production",
         "SANEA_SERVER_HOST": "127.0.0.1",
         "SANEA_ALLOWED_HOSTS": json.dumps(["localhost", "127.0.0.1"]),
         "SANEA_HTTP_PORT": f"{http_port}",
@@ -266,6 +288,7 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
     execute.run([sanea, "migrate", "--noinput", "--verbosity", "0"])
     execute.run([sanea, "check"])
     execute.run([sanea, "findstatic", "sanea/css/app.css", "--verbosity", "0"])
+    execute.run([sanea, "collectstatic", "--noinput", "--verbosity", "0"])
 
     with (work_dir / "server.log").open("wb") as server_log, execute.start(
         [sanea, "serve", "--verbosity", "0"], stdout=server_log,

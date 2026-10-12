@@ -111,7 +111,9 @@ window agent. Repository-tool tests use temporary local Git repositories only.
 
 Build wheels and source distributions for all three components, install the
 wheels into a clean temporary Python 3.12 environment, and check application
-commands and sanea listeners outside the source checkout with:
+commands and sanea listeners outside the source checkout with production settings.
+The check collects static assets and verifies CSS, JavaScript and icons over
+both HTTP and HTTPS:
 
 ```bash
 uv run --python 3.12 run.py wheel
