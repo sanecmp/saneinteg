@@ -15,7 +15,10 @@ import pytest
 def static_responses() -> list[MagicMock]:
     responses = []
 
-    for content_type in ["text/css", "text/javascript", "text/css", "text/javascript", "image/svg+xml", "text/css"] * 2:
+    for content_type in [
+        "text/css", "text/javascript", "text/javascript", "text/javascript",
+        "text/css", "text/javascript", "image/svg+xml", "text/css",
+    ] * 2:
         response = MagicMock()
         response.__enter__.return_value.headers.get_content_type.return_value = content_type
         response.__enter__.return_value.read.return_value = b"static asset"
@@ -39,7 +42,11 @@ def test_listeners_accept_sign_in_page_and_certificate_rejection(
     assert api_request.data == b"{}"
     assert rejection.fp.closed
     assert opening.call_args_list[1].args == ("http://127.0.0.1:18000/static/sanea/css/app.css",)
-    assert opening.call_args_list[7].args == ("https://127.0.0.1:18443/static/sanea/css/app.css",)
+    assert opening.call_args_list[3].args == ("http://127.0.0.1:18000/static/sanea/js/computers.js",)
+    assert opening.call_args_list[4].args == ("http://127.0.0.1:18000/static/sanea/js/activity-chart.js",)
+    assert opening.call_args_list[9].args == ("https://127.0.0.1:18443/static/sanea/css/app.css",)
+    assert opening.call_args_list[11].args == ("https://127.0.0.1:18443/static/sanea/js/computers.js",)
+    assert opening.call_args_list[12].args == ("https://127.0.0.1:18443/static/sanea/js/activity-chart.js",)
 
 
 def test_listeners_report_missing_static_and_close_error_response(
