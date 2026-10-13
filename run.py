@@ -214,6 +214,7 @@ def check_listeners(http_port: int, https_port: int) -> None:
             ("sanea/js/computers.js", "text/javascript"),
             ("sanea/js/activity-chart.js", "text/javascript"),
             ("sanea/js/account-limits.js", "text/javascript"),
+            ("sanea/js/diagnostic-logs.js", "text/javascript"),
             ("vendor/bootstrap/bootstrap.min.css", "text/css"),
             ("vendor/htmx/htmx.min.js", "text/javascript"),
             ("sanea/favicon.svg", "image/svg+xml"),
