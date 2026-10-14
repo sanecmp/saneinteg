@@ -7,7 +7,8 @@ vibe/
 
 # Website assets belong to their own repository; design documents are not kept here.
 /branding/
-/docs/
+/docs/*
+!/docs/index.md
 
 # Development environments, generated files and local state.
 **/uv.lock

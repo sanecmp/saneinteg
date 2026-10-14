@@ -131,7 +131,7 @@ def test_development_registration_reports_server_exit_or_timeout(
     monkeypatch.setattr(run_script, "sleep", Mock())
 
     with pytest.raises(RuntimeError, match=message):
-        run_script.registration_code(server, log_path)
+        run_script.read_registration_code(server, log_path)
 
 
 @pytest.mark.parametrize("command", ["develop", "wheel"])

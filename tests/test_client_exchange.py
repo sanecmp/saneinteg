@@ -755,7 +755,7 @@ def test_registration_and_authenticated_sync_use_real_network_transports(
         )
         packet = event_store.seal(1001)
         assert packet is not None
-        async with SyncHttpClient(registered.pki_paths.client_context()) as client:
+        async with SyncHttpClient(registered.pki_paths.create_client_context()) as client:
             unavailable_exchange = SyncExchange(
                 state=state,
                 client=client,
@@ -1059,7 +1059,7 @@ def test_cancelled_global_update_disappears_from_sanex_after_sync(
             b"",
             _KeepCommandsPending(),
         )
-        async with SyncHttpClient(registered.pki_paths.client_context()) as client:
+        async with SyncHttpClient(registered.pki_paths.create_client_context()) as client:
             exchange = SyncExchange(
                 state=state,
                 client=client,
@@ -1145,8 +1145,8 @@ def test_two_clients_synchronize_and_store_events_concurrently(
         )
 
         async with (
-            SyncHttpClient(first.pki_paths.client_context()) as first_client,
-            SyncHttpClient(second.pki_paths.client_context()) as second_client,
+            SyncHttpClient(first.pki_paths.create_client_context()) as first_client,
+            SyncHttpClient(second.pki_paths.create_client_context()) as second_client,
         ):
             (
                 first_response,
@@ -1220,7 +1220,7 @@ def test_system_service_uploads_all_accounts_during_one_active_session(
             targets=("127.0.0.1",),
         )
 
-        async with SyncHttpClient(registered.pki_paths.client_context()) as client:
+        async with SyncHttpClient(registered.pki_paths.create_client_context()) as client:
             sync_exchange = SyncExchange(state, client, discovery)
             assert await sync_exchange.run() is True
             assert await sync_exchange.run() is True
@@ -1355,7 +1355,7 @@ def test_maximum_event_count_packet_crosses_real_network_boundary(
         assert packet.last_seq == MAX_EVENTS_PER_PACKET
         assert event_store.pending(4001) == (packet,)
 
-        async with SyncHttpClient(registered.pki_paths.client_context()) as client:
+        async with SyncHttpClient(registered.pki_paths.create_client_context()) as client:
             sync_exchange = SyncExchange(
                 state,
                 client,

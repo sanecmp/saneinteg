@@ -38,11 +38,11 @@ class IndicatorLogind:
     async def stop_sleep_monitoring(self) -> None:
         return None
 
-    async def next_sleep_change(self) -> bool:
+    async def wait_for_sleep_change(self) -> bool:
         self.waiting.set()
         return await asyncio.Event().wait()
 
-    async def sessions(self) -> tuple[LoginSession, ...]:
+    async def read_sessions(self) -> tuple[LoginSession, ...]:
         return (self.session,)
 
     async def terminate(self, ident: str) -> None:
@@ -58,7 +58,7 @@ class IndicatorWindowAgents:
     async def reconcile(self, sessions: tuple[LoginSession, ...]) -> None:
         assert sessions == ()
 
-    async def windows(self, session: LoginSession) -> AtspiWindowSnapshot:
+    async def read_windows(self, session: LoginSession) -> AtspiWindowSnapshot:
         raise AssertionError("indicator checks must not observe windows")
 
     async def close(self) -> None:

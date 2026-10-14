@@ -24,7 +24,7 @@ class FakeBackend:
         self.snapshot = AtspiWindowSnapshot(windows=windows)
         self.closed: list[AtspiWindow] = []
 
-    async def windows(self) -> AtspiWindowSnapshot:
+    async def read_windows(self) -> AtspiWindowSnapshot:
         return self.snapshot
 
     async def close_window(self, window: AtspiWindow) -> bool:
@@ -83,7 +83,7 @@ async def scenario_client_and_server_exchange_snapshot_and_close_request() -> No
     task = asyncio.create_task(server.serve())
     client = WindowAgentClient(1001, "3", root_reader, root_writer)
 
-    snapshot = await client.windows(login_session())
+    snapshot = await client.read_windows(login_session())
     accepted = await client.close_window(1001, "3", window)
     await client.close()
     await task
@@ -182,7 +182,7 @@ async def scenario_reconcile_routes_requests_and_stops_removed_agent() -> None:
 
     await agents.reconcile((session,))
 
-    assert (await agents.windows(session)).windows == (window,)
+    assert (await agents.read_windows(session)).windows == (window,)
     assert await agents.close_window(session.uid, session.ident, window)
     assert launcher.backends[0].closed == [window]
 

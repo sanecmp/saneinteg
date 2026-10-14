@@ -41,6 +41,7 @@ class Commands:
     def start(
         self, command: Sequence[str], *, cwd: Path | None = None, stdout: BinaryIO | int | None = None,
     ) -> Iterator[subprocess.Popen[bytes]]:
+        """Start a separate process group and stop it when the caller leaves."""
         process = subprocess.Popen(
             command, cwd=cwd or self.cwd, env=self.environment, start_new_session=True,
             stdout=stdout, stderr=subprocess.STDOUT if stdout is not None else None,
@@ -71,6 +72,7 @@ class Commands:
                 process.wait()
 
     def run(self, command: Sequence[str], *, cwd: Path | None = None, stdout: BinaryIO | int | None = None) -> None:
+        """Run a command to completion and report a nonzero exit status."""
 
         with self.start(command, cwd=cwd, stdout=stdout) as process:
             exit_code = process.wait()
@@ -80,6 +82,7 @@ class Commands:
 
 
 def load_environment(project_root: Path) -> dict[str, str]:
+    """Load local overrides without passing the runner environment to children."""
     env_file = project_root / ".env"
 
     if not env_file.exists():
@@ -93,6 +96,7 @@ def load_environment(project_root: Path) -> dict[str, str]:
 
 @contextmanager
 def run_directory(project_root: Path, command: str, parent: str | None) -> Iterator[Path]:
+    """Provide temporary state, retaining it only when a parent directory is selected."""
 
     if parent:
         parent_dir = project_root / Path(parent).expanduser()
@@ -105,7 +109,8 @@ def run_directory(project_root: Path, command: str, parent: str | None) -> Itera
             yield Path(directory)
 
 
-def registration_code(server: subprocess.Popen[bytes], log_path: Path) -> str:
+def read_registration_code(server: subprocess.Popen[bytes], log_path: Path) -> str:
+    """Wait for the server registration code without printing its startup log."""
     deadline = monotonic() + 30
 
     while monotonic() < deadline:
@@ -124,6 +129,7 @@ def registration_code(server: subprocess.Popen[bytes], log_path: Path) -> str:
 
 
 def develop(project_root: Path, work_dir: Path, environment: dict[str, str]) -> None:
+    """Start both applications with isolated state and register the development client."""
     execute = Commands(project_root, environment)
 
     for component in ("sanex", "sanea"):
@@ -145,7 +151,7 @@ def develop(project_root: Path, work_dir: Path, environment: dict[str, str]) -> 
     ) as server:
 
         try:
-            code = registration_code(server, log_path)
+            code = read_registration_code(server, log_path)
 
         except RuntimeError:
             logger.error("sanea startup log:\n%s", log_path.read_text(encoding="utf-8"))
@@ -162,10 +168,12 @@ def develop(project_root: Path, work_dir: Path, environment: dict[str, str]) -> 
 
 
 def run_tests(project_root: Path, environment: dict[str, str], arguments: Sequence[str]) -> None:
+    """Run integration tests in the root project environment."""
     Commands(project_root, environment).run(["uv", "run", "--python", "3.12", "--group", "tests", "pytest", *arguments])
 
 
-def free_ports() -> tuple[int, ...]:
+def find_available_ports() -> tuple[int, ...]:
+    """Find three unused local ports for the isolated installed-package check."""
 
     with ExitStack() as stack:
         sockets = [stack.enter_context(socket.socket()) for attempt in range(3)]
@@ -177,6 +185,7 @@ def free_ports() -> tuple[int, ...]:
 
 
 def check_listeners(http_port: int, https_port: int) -> None:
+    """Check the browser and authenticated API listeners on local test ports."""
     http_url = f"http://127.0.0.1:{http_port}/"
     deadline = monotonic() + 10
 
@@ -251,6 +260,7 @@ def check_listeners(http_port: int, https_port: int) -> None:
 
 
 def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -> None:
+    """Build and check installed packages using temporary state and local listeners."""
     wheel_dir = work_dir / "wheels"
     wheel_dir.mkdir()
     environment = {name: value for name, value in environment.items() if name not in {"PYTHONPATH", "PYTHONHOME"}}
@@ -264,7 +274,7 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
     python = f"{binaries / "python"}"
     execute.run(["uv", "venv", "--python", "3.12", f"{venv}"])
     execute.run(["uv", "pip", "install", "--python", python, *(f"{wheel}" for wheel in sorted(wheel_dir.glob("*.whl")))])
-    http_port, https_port, discovery_port = free_ports()
+    http_port, https_port, discovery_port = find_available_ports()
     environment.update({
         "PYTHON_ENV": "production",
         "SANEA_SERVER_HOST": "127.0.0.1",
@@ -279,11 +289,11 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
         "from importlib.metadata import version; "
         "import sanea, sanelib, sanex; "
         "from sanelib.protocol import Config; "
-        "from sanex.version import installed_version; "
+        "from sanex.version import get_installed_version; "
         "assert Config; "
         "assert sanea.__version__ == version(\"sanecmp-sanea\"); "
         "assert sanelib.VERSION == version(\"sanecmp-sanelib\"); "
-        "assert installed_version() == version(\"sanecmp-sanex\")",
+        "assert get_installed_version() == version(\"sanecmp-sanex\")",
     ])
 
     for command in ("sanea", "sanex", "sanex-indicator"):
@@ -306,10 +316,12 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
 
 
 def terminate_on_signal(signal_number: int, frame: FrameType | None) -> None:
+    """Turn a termination signal into normal runner cleanup."""
     raise SystemExit(128 + signal_number)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Select an isolated development or verification command and report its result."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("develop", help="start sanea and a safe development sanex client")

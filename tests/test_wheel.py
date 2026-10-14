@@ -120,7 +120,7 @@ def test_wheel_stops_its_server_after_a_failed_check(
     monkeypatch.setattr(run_script.Commands, "run", commands)
     monkeypatch.setattr(run_script.os, "killpg", kill_group)
     monkeypatch.setattr(run_script.subprocess, "Popen", launch)
-    monkeypatch.setattr(run_script, "free_ports", Mock(return_value=(18000, 18443, 62117)))
+    monkeypatch.setattr(run_script, "find_available_ports", Mock(return_value=(18000, 18443, 62117)))
     monkeypatch.setattr(run_script, "check_listeners", Mock(side_effect=RuntimeError("listener failed")))
 
     with pytest.raises(RuntimeError, match="listener failed"):
