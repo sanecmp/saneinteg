@@ -2,12 +2,14 @@
 
 import asyncio
 import base64
+import configparser
 import hashlib
 import ipaddress
 import json
 import os
 import shutil
 import ssl
+import stat
 import subprocess
 import sys
 import threading
@@ -49,6 +51,9 @@ class PassthroughExecutableValidator:
 class SubprocessReplacer:
     """Run the replacement command to completion without replacing pytest."""
 
+    def __init__(self, *, umask: int) -> None:
+        self.umask = umask
+
     def replace(
         self,
         executable: str,
@@ -61,6 +66,7 @@ class SubprocessReplacer:
             check=False,
             capture_output=True,
             text=True,
+            umask=self.umask,
         )
         assert completed.returncode == 0, completed.stderr
 
@@ -75,6 +81,9 @@ def test_installs_exact_release_from_temporary_https_index(
 ) -> None:
     uv = shutil.which("uv")
     assert uv is not None
+    service_config = configparser.ConfigParser(interpolation=None)
+    service_config.read(Path(__file__).parents[1] / "components/sanex/systemd/sanex.service")
+    service_umask = int(service_config["Service"]["UMask"], 8)
     tool_dir = tmp_path / "bundle"
     tool_bin_dir = tmp_path / "bin"
     old_wheel = build_wheel(tmp_path, OLD_VERSION)
@@ -113,7 +122,7 @@ def test_installs_exact_release_from_temporary_https_index(
             install_store=InstallConfigStore(install_path),
             state_store=state_store,
             executable_validator=PassthroughExecutableValidator(),
-            process_replacer=SubprocessReplacer(),
+            process_replacer=SubprocessReplacer(umask=service_umask),
             environment=lambda: {
                 **base_environment,
                 "SSL_CERT_FILE": f"{ca_certificate}",
@@ -132,6 +141,22 @@ def test_installs_exact_release_from_temporary_https_index(
     assert state.index_url == index_url
     assert state.attempts == 1
     assert read_installed_version(tool_bin_dir) == NEW_VERSION
+
+    # The root service and the user's indicator share this installation.
+    application_directory = tool_dir / "sanecmp-sanex"
+    package_directory = next(application_directory.glob("lib/python*/site-packages/sanex"))
+
+    for directory in (
+        tool_dir, tool_bin_dir, application_directory, application_directory / "bin",
+        application_directory / "lib", package_directory.parent.parent,
+        package_directory.parent, package_directory,
+    ):
+        assert stat.S_IMODE(directory.stat().st_mode) & 0o005 == 0o005, directory
+
+    for path in (tool_bin_dir / "sanex", package_directory / "__init__.py", package_directory / "cli.py"):
+        assert stat.S_IMODE(path.stat().st_mode) & stat.S_IROTH, path
+
+    assert stat.S_IMODE((tool_bin_dir / "sanex").stat().st_mode) & stat.S_IXOTH
 
     UpdateRecovery(
         command_store,
