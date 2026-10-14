@@ -219,6 +219,9 @@ def check_listeners(http_port: int, https_port: int) -> None:
             ("vendor/htmx/htmx.min.js", "text/javascript"),
             ("sanea/favicon.svg", "image/svg+xml"),
             ("admin/css/base.css", "text/css"),
+            ("sanea/js/searchable-selects.js", "text/javascript"),
+            ("vendor/tom-select/tom-select.complete.min.js", "text/javascript"),
+            ("vendor/tom-select/tom-select.bootstrap5.min.css", "text/css"),
         ):
             try:
 
