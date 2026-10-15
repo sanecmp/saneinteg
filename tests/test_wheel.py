@@ -11,99 +11,85 @@ from urllib.error import HTTPError
 import pytest
 
 
-@pytest.fixture
-def static_responses() -> list[MagicMock]:
-    responses = []
-
-    for content_type in [
-        "text/css", "text/javascript", "text/javascript", "text/javascript",
-        "text/javascript", "text/javascript", "text/css", "text/javascript", "image/svg+xml", "text/css",
-        "text/javascript", "text/javascript", "text/css",
-    ] * 2:
-        response = MagicMock()
-        response.__enter__.return_value.headers.get_content_type.return_value = content_type
-        response.__enter__.return_value.read.return_value = b"static asset"
-        responses.append(response)
-
-    return responses
-
-
 def test_listeners_accept_sign_in_page_and_certificate_rejection(
-    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_responses: list[MagicMock],
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_root: Path, static_responses: list[MagicMock],
+    static_assets: dict[str, str],
 ) -> None:
     rejection = HTTPError("https://127.0.0.1:18443/client/sync", 403, "Forbidden", {}, io.BytesIO())
     opening = Mock(side_effect=[io.BytesIO(b"Sign in"), *static_responses, rejection])
     monkeypatch.setattr(run_script.request, "urlopen", opening)
 
-    run_script.check_listeners(18000, 18443)
+    run_script.check_listeners(18000, 18443, static_root)
 
     api_request = opening.call_args.args[0]
     assert api_request.full_url == "https://127.0.0.1:18443/client/sync"
     assert api_request.get_method() == "POST"
     assert api_request.data == b"{}"
     assert rejection.fp.closed
-    assert opening.call_args_list[1].args == ("http://127.0.0.1:18000/static/sanea/css/app.css",)
-    assert opening.call_args_list[3].args == ("http://127.0.0.1:18000/static/sanea/js/computers.js",)
-    assert opening.call_args_list[4].args == ("http://127.0.0.1:18000/static/sanea/js/activity-chart.js",)
-    assert opening.call_args_list[5].args == ("http://127.0.0.1:18000/static/sanea/js/account-limits.js",)
-    assert opening.call_args_list[6].args == ("http://127.0.0.1:18000/static/sanea/js/diagnostic-logs.js",)
-    assert opening.call_args_list[11].args == ("http://127.0.0.1:18000/static/sanea/js/searchable-selects.js",)
-    assert opening.call_args_list[12].args == ("http://127.0.0.1:18000/static/vendor/tom-select/tom-select.complete.min.js",)
-    assert opening.call_args_list[13].args == ("http://127.0.0.1:18000/static/vendor/tom-select/tom-select.bootstrap5.min.css",)
-    assert opening.call_args_list[14].args == ("https://127.0.0.1:18443/static/sanea/css/app.css",)
-    assert opening.call_args_list[16].args == ("https://127.0.0.1:18443/static/sanea/js/computers.js",)
-    assert opening.call_args_list[17].args == ("https://127.0.0.1:18443/static/sanea/js/activity-chart.js",)
-    assert opening.call_args_list[18].args == ("https://127.0.0.1:18443/static/sanea/js/account-limits.js",)
-    assert opening.call_args_list[19].args == ("https://127.0.0.1:18443/static/sanea/js/diagnostic-logs.js",)
-    assert opening.call_args_list[24].args == ("https://127.0.0.1:18443/static/sanea/js/searchable-selects.js",)
-    assert opening.call_args_list[25].args == ("https://127.0.0.1:18443/static/vendor/tom-select/tom-select.complete.min.js",)
-    assert opening.call_args_list[26].args == ("https://127.0.0.1:18443/static/vendor/tom-select/tom-select.bootstrap5.min.css",)
+    asset_urls = {call.args[0] for call in opening.call_args_list[1:-1]}
+    expected_urls = {
+        f"{base_url}/static/{asset}"
+        for base_url in ("http://127.0.0.1:18000", "https://127.0.0.1:18443")
+        for asset in static_assets
+    }
+    assert asset_urls == expected_urls
+    assert len(opening.call_args_list) == len(expected_urls) + 2
 
 
 def test_listeners_report_missing_static_and_close_error_response(
-    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch,
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_root: Path,
 ) -> None:
-    failure = HTTPError("http://127.0.0.1:18000/static/sanea/css/app.css", 404, "Not Found", {}, io.BytesIO())
+    failure = HTTPError("http://127.0.0.1:18000/static/example/app.css", 404, "Not Found", {}, io.BytesIO())
     monkeypatch.setattr(run_script.request, "urlopen", Mock(side_effect=[io.BytesIO(b"Sign in"), failure]))
 
-    with pytest.raises(RuntimeError, match="static asset sanea/css/app.css returned HTTP 404"):
-        run_script.check_listeners(18000, 18443)
+    with pytest.raises(RuntimeError, match="static asset example/app.css returned HTTP 404"):
+        run_script.check_listeners(18000, 18443, static_root)
 
     assert failure.fp.closed
 
 
+def test_listeners_refuse_an_empty_static_collection(
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(run_script.request, "urlopen", Mock(return_value=io.BytesIO(b"Sign in")))
+
+    with pytest.raises(RuntimeError, match="did not collect any static assets"):
+        run_script.check_listeners(18000, 18443, tmp_path)
+
+
 @pytest.mark.parametrize("invalid_body", [False, True], ids=["wrong-content-type", "empty-body"])
 def test_listeners_refuse_static_with_wrong_content(
-    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_responses: list[MagicMock], invalid_body: bool,
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_root: Path,
+    static_responses: list[MagicMock], invalid_body: bool,
 ) -> None:
     response = static_responses[0].__enter__.return_value
     response.headers.get_content_type.return_value = "text/css" if invalid_body else "text/html"
     response.read.return_value = b"" if invalid_body else b"Sign in"
     monkeypatch.setattr(run_script.request, "urlopen", Mock(side_effect=[io.BytesIO(b"Sign in"), *static_responses]))
 
-    with pytest.raises(RuntimeError, match="did not serve static asset sanea/css/app.css"):
-        run_script.check_listeners(18000, 18443)
+    with pytest.raises(RuntimeError, match="did not serve static asset example/app.css"):
+        run_script.check_listeners(18000, 18443, static_root)
 
 
 def test_listeners_refuse_an_api_that_accepts_no_certificate(
-    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_responses: list[MagicMock],
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_root: Path, static_responses: list[MagicMock],
 ) -> None:
     opening = Mock(side_effect=[io.BytesIO(b"Sign in"), *static_responses, io.BytesIO(b"accepted")])
     monkeypatch.setattr(run_script.request, "urlopen", opening)
 
     with pytest.raises(RuntimeError, match="accepted a client request without a certificate"):
-        run_script.check_listeners(18000, 18443)
+        run_script.check_listeners(18000, 18443, static_root)
 
 
 def test_listeners_do_not_treat_other_http_errors_as_success(
-    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_responses: list[MagicMock],
+    run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, static_root: Path, static_responses: list[MagicMock],
 ) -> None:
     failure = HTTPError("https://127.0.0.1:18443/client/sync", 500, "Server error", {}, io.BytesIO())
     opening = Mock(side_effect=[io.BytesIO(b"Sign in"), *static_responses, failure])
     monkeypatch.setattr(run_script.request, "urlopen", opening)
 
     with pytest.raises(HTTPError, match="500"):
-        run_script.check_listeners(18000, 18443)
+        run_script.check_listeners(18000, 18443, static_root)
 
     assert failure.fp.closed
 
@@ -124,7 +110,7 @@ def test_wheel_stops_its_server_after_a_failed_check(
     monkeypatch.setattr(run_script, "check_listeners", Mock(side_effect=RuntimeError("listener failed")))
 
     with pytest.raises(RuntimeError, match="listener failed"):
-        run_script.run_wheel(tmp_path / "source", tmp_path, {})
+        run_script.run_wheel(tmp_path / "source", tmp_path, {"SANEA_STATE_DIR": f"{tmp_path / "sanea"}"})
 
     kill_group.assert_any_call(server.pid, signal.SIGTERM)
     assert kill_group.call_count == 1 + int(wait_timeout)

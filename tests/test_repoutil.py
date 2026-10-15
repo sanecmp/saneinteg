@@ -17,6 +17,7 @@ class Repository:
     initial_revision: str
     latest_revision: str
     environment: dict[str, str]
+    component_name: str = "sanex"
 
 
 def run_git(directory: Path, *arguments: str, environment: dict[str, str]) -> str:
@@ -45,7 +46,8 @@ def run_repoutil(repository: Repository, *arguments: str, cwd: Path) -> subproce
 
 
 @pytest.fixture
-def repository(tmp_path: Path) -> Repository:
+def repository(tmp_path: Path, request: pytest.FixtureRequest) -> Repository:
+    component_name = getattr(request, "param", "sanex")
     environment = {
         **{name: value for name, value in os.environ.items() if not name.startswith("GIT_")},
         "GIT_CONFIG_GLOBAL": os.devnull,
@@ -71,26 +73,32 @@ def repository(tmp_path: Path) -> Repository:
 
     run_git(checkout, "add", "repoutil.sh", environment=environment)
     run_git(checkout, "commit", "-m", "Pin components", environment=environment)
-    source = tmp_path / "sources" / "sanex"
+    source = tmp_path / "sources" / component_name
     initial_revision = run_git(source, "rev-parse", "HEAD", environment=environment)
     (source / "application.txt").write_text("updated\n")
     run_git(source, "commit", "-am", "New component revision", environment=environment)
     latest_revision = run_git(source, "rev-parse", "HEAD", environment=environment)
     run_git(source, "tag", "release", environment=environment)
-    return Repository(checkout, initial_revision, latest_revision, environment)
+    return Repository(checkout, initial_revision, latest_revision, environment, component_name)
 
 
-@pytest.fixture(params=["unstaged", "staged", "untracked"])
-def dirty_component(repository: Repository, request: pytest.FixtureRequest) -> Path:
-    component = repository.checkout / "components" / "sanex"
-    filename = "new.txt" if request.param == "untracked" else "application.txt"
+@pytest.fixture(params=["unstaged", "staged", "untracked", "unpublished"])
+def dirty_component(repository: Repository, request: pytest.FixtureRequest) -> tuple[Path, str]:
+    component = repository.checkout / "components" / repository.component_name
+    change = request.param
+    filename = "new.txt" if change == "untracked" else "application.txt"
     changed_file = component / filename
     changed_file.write_text("local change\n")
+    message = f"{repository.component_name} has local changes"
 
-    if request.param == "staged":
+    if change == "staged":
         run_git(component, "add", filename, environment=repository.environment)
 
-    return changed_file
+    elif change == "unpublished":
+        run_git(component, "commit", "-am", "Unpublished change", environment=repository.environment)
+        message = "not present on origin"
+
+    return changed_file, message
 
 
 def test_init_uses_recorded_revisions_from_an_unrelated_directory(repository: Repository, tmp_path: Path) -> None:
@@ -124,99 +132,41 @@ def test_status_reports_local_changes_without_modifying_them(
     assert changed_file.read_text() == "local change\n"
 
 
-def test_update_fetches_landing_without_staging_its_pointer(repository: Repository, tmp_path: Path) -> None:
-    source = tmp_path / "sources" / "landing"
-    initial_revision = run_git(source, "rev-parse", "HEAD", environment=repository.environment)
-    (source / "application.txt").write_text("website update\n")
-    run_git(source, "commit", "-am", "Update website", environment=repository.environment)
-    latest_revision = run_git(source, "rev-parse", "HEAD", environment=repository.environment)
-
-    result = run_repoutil(repository, "update", "landing", "origin/main", cwd=tmp_path)
-
-    assert result.returncode == 0, result.stderr
-    component = repository.checkout / "components" / "landing"
-    assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == latest_revision
-    recorded_revision = run_git(repository.checkout, "rev-parse", ":components/landing", environment=repository.environment)
-    assert recorded_revision == initial_revision
-    assert run_git(repository.checkout, "diff", "--cached", "--name-only", environment=repository.environment) == ""
-    assert run_git(repository.checkout, "diff", "--name-only", environment=repository.environment) == "components/landing"
-
-
-@pytest.mark.parametrize("command", ["init", "update"])
-@pytest.mark.parametrize(("change", "message"), [
-    pytest.param("unstaged", "landing has local changes", id="unstaged"),
-    pytest.param("staged", "landing has local changes", id="staged"),
-    pytest.param("untracked", "landing has local changes", id="untracked"),
-    pytest.param("unpublished", "not present on origin", id="unpublished"),
-])
-def test_switching_landing_refuses_local_changes(
-    repository: Repository, tmp_path: Path, command: str, change: str, message: str,
-) -> None:
-    component = repository.checkout / "components" / "landing"
-    changed_file = component / ("new.txt" if change == "untracked" else "application.txt")
-    changed_file.write_text("local website change\n")
-
-    if change == "staged":
-        run_git(component, "add", changed_file.name, environment=repository.environment)
-
-    elif change == "unpublished":
-        run_git(component, "commit", "-am", "Unpublished website", environment=repository.environment)
-
-    current_revision = run_git(component, "rev-parse", "HEAD", environment=repository.environment)
-    arguments = ("init",) if command == "init" else ("update", "landing", "origin/main")
-
-    result = run_repoutil(repository, *arguments, cwd=tmp_path)
-
-    assert result.returncode == 1
-    assert message in result.stderr
-    assert changed_file.read_text() == "local website change\n"
-    assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == current_revision
-
-
+@pytest.mark.parametrize("repository", ["sanex", "landing"], indirect=True)
 @pytest.mark.parametrize("revision_kind", ["branch", "tag", "commit"])
 def test_update_fetches_one_component_without_staging_its_pointer(
     repository: Repository, revision_kind: str, tmp_path: Path,
 ) -> None:
     revision = {"branch": "origin/main", "tag": "release", "commit": repository.latest_revision}[revision_kind]
 
-    result = run_repoutil(repository, "update", "sanex", revision, cwd=tmp_path)
+    result = run_repoutil(repository, "update", repository.component_name, revision, cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
-    component = repository.checkout / "components" / "sanex"
+    pointer = f"components/{repository.component_name}"
+    component = repository.checkout / pointer
     assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == repository.latest_revision
-    recorded_revision = run_git(repository.checkout, "rev-parse", ":components/sanex", environment=repository.environment)
+    recorded_revision = run_git(repository.checkout, "rev-parse", f":{pointer}", environment=repository.environment)
     assert recorded_revision == repository.initial_revision
     assert run_git(repository.checkout, "diff", "--cached", "--name-only", environment=repository.environment) == ""
-    assert run_git(repository.checkout, "diff", "--name-only", environment=repository.environment) == "components/sanex"
+    assert run_git(repository.checkout, "diff", "--name-only", environment=repository.environment) == pointer
 
 
-@pytest.mark.parametrize("arguments", [("init",), ("update", "sanex", "origin/main")])
+@pytest.mark.parametrize("repository", ["sanex", "landing"], indirect=True)
+@pytest.mark.parametrize("command", ["init", "update"])
 def test_switching_refuses_local_changes(
-    repository: Repository, dirty_component: Path, arguments: tuple[str, ...], tmp_path: Path,
+    repository: Repository, dirty_component: tuple[Path, str], command: str, tmp_path: Path,
 ) -> None:
-    result = run_repoutil(repository, *arguments, cwd=tmp_path)
-
-    assert result.returncode == 1
-    assert "sanex has local changes" in result.stderr
-    assert dirty_component.read_text() == "local change\n"
-    actual_revision = run_git(dirty_component.parent, "rev-parse", "HEAD", environment=repository.environment)
-    assert actual_revision == repository.initial_revision
-
-
-@pytest.mark.parametrize("arguments", [("init",), ("update", "sanex", "origin/main")])
-def test_switching_refuses_an_unpublished_commit(
-    repository: Repository, arguments: tuple[str, ...], tmp_path: Path,
-) -> None:
-    component = repository.checkout / "components" / "sanex"
-    (component / "application.txt").write_text("unpublished\n")
-    run_git(component, "commit", "-am", "Local unpublished change", environment=repository.environment)
-    unpublished_revision = run_git(component, "rev-parse", "HEAD", environment=repository.environment)
+    changed_file, message = dirty_component
+    arguments = {"init": ("init",), "update": ("update", repository.component_name, "origin/main")}[command]
+    current_revision = run_git(changed_file.parent, "rev-parse", "HEAD", environment=repository.environment)
 
     result = run_repoutil(repository, *arguments, cwd=tmp_path)
 
     assert result.returncode == 1
-    assert "not present on origin" in result.stderr
-    assert run_git(component, "rev-parse", "HEAD", environment=repository.environment) == unpublished_revision
+    assert message in result.stderr
+    assert changed_file.read_text() == "local change\n"
+    actual_revision = run_git(changed_file.parent, "rev-parse", "HEAD", environment=repository.environment)
+    assert actual_revision == current_revision
 
 
 @pytest.mark.parametrize("arguments", [

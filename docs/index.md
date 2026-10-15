@@ -121,8 +121,9 @@ window agent. Repository-tool tests use temporary local Git repositories only.
 Build wheels and source distributions for all three components, install the
 wheels into a clean temporary Python 3.12 environment, and check application
 commands and sanea listeners outside the source checkout with production settings.
-The check collects static assets and verifies CSS, JavaScript and icons over
-both HTTP and HTTPS:
+The check collects static assets from the installed packages and verifies all
+collected CSS, JavaScript and SVG icons over both HTTP and HTTPS, without a
+manually maintained list of filenames:
 
 ```bash
 uv run --python 3.12 run.py wheel

@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 from django.core.management import call_command
@@ -63,3 +64,38 @@ def runner_workspace(run_script: ModuleType, monkeypatch: pytest.MonkeyPatch, tm
             monkeypatch.delenv(name)
 
     return root
+
+
+@pytest.fixture
+def static_assets() -> dict[str, str]:
+    return {
+        "example/app.css": "text/css",
+        "example/icon.svg": "image/svg+xml",
+        "example/new-ui.js": "text/javascript",
+    }
+
+
+@pytest.fixture
+def static_root(tmp_path: Path, static_assets: dict[str, str]) -> Path:
+    root = tmp_path / "static"
+
+    for asset in (*static_assets, "example/ignored.txt"):
+        path = root / asset
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"synthetic asset")
+
+    (root / "directory.css").mkdir()
+    return root
+
+
+@pytest.fixture
+def static_responses(static_assets: dict[str, str]) -> list[MagicMock]:
+    responses = []
+
+    for content_type in list(static_assets.values()) * 2:
+        response = MagicMock()
+        response.__enter__.return_value.headers.get_content_type.return_value = content_type
+        response.__enter__.return_value.read.return_value = b"static asset"
+        responses.append(response)
+
+    return responses

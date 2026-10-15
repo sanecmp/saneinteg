@@ -184,7 +184,7 @@ def find_available_ports() -> tuple[int, ...]:
         return tuple(item.getsockname()[1] for item in sockets)
 
 
-def check_listeners(http_port: int, https_port: int) -> None:
+def check_listeners(http_port: int, https_port: int, static_root: Path) -> None:
     """Check the browser and authenticated API listeners on local test ports."""
     http_url = f"http://127.0.0.1:{http_port}/"
     deadline = monotonic() + 10
@@ -214,24 +214,19 @@ def check_listeners(http_port: int, https_port: int) -> None:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
+    content_types = {".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml"}
+    assets = [
+        (path.relative_to(static_root).as_posix(), content_types[path.suffix])
+        for path in sorted(static_root.rglob("*"))
+        if path.is_file() and path.suffix in content_types
+    ]
+
+    if not assets:
+        raise RuntimeError("sanea did not collect any static assets")
 
     for base_url in (http_url, f"https://127.0.0.1:{https_port}/"):
 
-        for asset, content_type in (
-            ("sanea/css/app.css", "text/css"),
-            ("sanea/js/registration-window.js", "text/javascript"),
-            ("sanea/js/computers.js", "text/javascript"),
-            ("sanea/js/activity-chart.js", "text/javascript"),
-            ("sanea/js/account-limits.js", "text/javascript"),
-            ("sanea/js/diagnostic-logs.js", "text/javascript"),
-            ("vendor/bootstrap/bootstrap.min.css", "text/css"),
-            ("vendor/htmx/htmx.min.js", "text/javascript"),
-            ("sanea/favicon.svg", "image/svg+xml"),
-            ("admin/css/base.css", "text/css"),
-            ("sanea/js/searchable-selects.js", "text/javascript"),
-            ("vendor/tom-select/tom-select.complete.min.js", "text/javascript"),
-            ("vendor/tom-select/tom-select.bootstrap5.min.css", "text/css"),
-        ):
+        for asset, content_type in assets:
             try:
 
                 with request.urlopen(f"{base_url}static/{asset}", context=context, timeout=2) as response:
@@ -304,13 +299,12 @@ def run_wheel(project_root: Path, work_dir: Path, environment: dict[str, str]) -
     sanea = f"{binaries / "sanea"}"
     execute.run([sanea, "migrate", "--noinput", "--verbosity", "0"])
     execute.run([sanea, "check"])
-    execute.run([sanea, "findstatic", "sanea/css/app.css", "--verbosity", "0"])
     execute.run([sanea, "collectstatic", "--noinput", "--verbosity", "0"])
 
     with (work_dir / "server.log").open("wb") as server_log, execute.start(
         [sanea, "serve", "--verbosity", "0"], stdout=server_log,
     ):
-        check_listeners(http_port, https_port)
+        check_listeners(http_port, https_port, Path(environment["SANEA_STATE_DIR"]) / "static")
 
     logger.info("Wheel and sdist check passed.")
 
