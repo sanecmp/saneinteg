@@ -3,8 +3,11 @@
 from pathlib import Path
 from datetime import UTC, date, datetime
 import hashlib
+from shutil import rmtree
 
-from sanelib.protocol import EventType, ProcessStartEvent, encode_event, parse_event_packet
+import pytest
+
+from sanelib.protocol import EventType, ObservationSource, ProcessStartEvent, encode_event, parse_event_packet
 
 from sanea.core.models import Account, ActivityEvent, AppRule, Computer, Limits, SessionRule
 
@@ -15,6 +18,7 @@ from sanex.model.state import RuntimeState
 from sanex.model.window import AtspiWindow, AtspiWindowSnapshot, WindowRole
 from sanex.platform.process import ProcessReader, WindowProcessResolver
 from sanex.service.applications import create_application_resolver
+from sanex.service.steam_observation import SteamProcessObserver
 
 
 UID = 1001
@@ -23,6 +27,49 @@ BROWSER_CGROUP = (
     "/user.slice/user-1001.slice/user@1001.service/"
     "app.slice/app-example-browser.scope"
 )
+
+
+@pytest.mark.parametrize("source", ["ewmh", "process"])
+def test_non_accessible_steam_game_reaches_parent_statistics_as_its_own_application(tmp_path: Path, source: str) -> None:
+    proc_root = tmp_path / "proc"
+    write_process(proc_root, 190, 1, "/steam/steam", "steam", 190)
+    write_process(proc_root, 400, 190, "/synthetic/tf_linux64", "tf_linux64", 400)
+    (proc_root / "400" / "environ").write_bytes(b"SteamAppId=440\0")
+    reader = ProcessReader(proc_root)
+    resolver = WindowProcessResolver(
+        reader, create_application_resolver(proc_root, catalog=DesktopCatalog(directories=())),
+        observer=SteamProcessObserver(reader.list_pids),
+    )
+    windows = [build_window(190, "/window/steam", "Steam")]
+
+    if source == "ewmh":
+        windows.append(build_window(400, "10", "Team Fortress 2").model_copy(update={"bus": "ewmh", "source": ObservationSource.EWMH}))
+
+    groups = resolver.resolve(windows, UID, sess_ident="graphical-session")
+    runtime = build_runtime()
+    started = int(datetime(2026, 10, 1, 12, tzinfo=UTC).timestamp())
+    runtime.reconcile_windows("graphical-session", groups, AtspiWindowSnapshot(windows=tuple(windows)), started, 0)
+    events = runtime.create_process_events((), 0, started)
+    game_event = next(event for event in events if event.application.ident == "steam:game:440")
+    assert game_event.meta.observed_via == source
+    assert game_event.prc_name == "tf_linux64"
+
+    rmtree(proc_root / "190")
+    rmtree(proc_root / "400")
+    ended_groups = resolver.resolve((), UID, sess_ident="graphical-session")
+    ended = runtime.reconcile_windows("graphical-session", ended_groups, AtspiWindowSnapshot(), started + 60, 60)
+    events += runtime.create_process_events(ended.ended, 0, started + 60)
+    content = b"".join(encode_event(event) for event in events)
+    computer = Computer.objects.create(hostname="synthetic-steam", status="allowed")
+    account = Account.objects.create(computer=computer, uid=UID, collect=True)
+
+    account.store_event_packet(parse_event_packet(content, hashlib.sha256(content).hexdigest()), len(content), None)
+    report = ActivityEvent.objects.build_report(Account.objects.filter(pk=account.pk), date(2026, 10, 1), date(2026, 10, 2))
+
+    assert {application.app_id for application in report.applications} == {"steam:client", "steam:game:440"}
+    game = next(application for application in report.applications if application.app_id == "steam:game:440")
+    assert game.duration == 60
+    assert game.launches == 1
 
 
 def test_groups_browser_style_workers_without_application_specific_names(
