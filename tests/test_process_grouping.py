@@ -7,9 +7,13 @@ from shutil import rmtree
 
 import pytest
 
-from sanelib.protocol import EventType, ObservationSource, ProcessStartEvent, encode_event, parse_event_packet
+from sanelib.protocol import EventType, ObservationSource, ProcessStartEvent, ProcessUpdateEvent, encode_event, parse_event_packet
 
+from sanea.core.forms import AppRuleForm
+from sanea.core.forms.account_limits import AccountAppForm
+from sanea.core.forms.app_rule import get_app_suggestions
 from sanea.core.models import Account, ActivityEvent, AppRule, Computer, Limits, SessionRule
+from sanea.core.services.activity_timeline import build_usage_timeline
 
 from sanex.accounting.runtime import AccountRuntime
 from sanex.accounting.app import AppRuleMatcher
@@ -121,6 +125,88 @@ def test_non_accessible_steam_game_reaches_parent_statistics_as_its_own_applicat
     game = next(application for application in report.applications if application.app_id == "steam:game:440")
     assert game.duration == 60
     assert game.launches == 1
+
+
+@pytest.mark.parametrize("source", [ObservationSource.ATSPI, ObservationSource.EWMH])
+def test_late_steam_window_updates_the_already_synchronized_game_in_reports_and_rule_choices(
+    tmp_path: Path, source: ObservationSource,
+) -> None:
+    proc_root = tmp_path / "proc"
+    write_process(proc_root, 190, 1, "/steam/steam", "steam", 190)
+    write_process(proc_root, 400, 190, "/synthetic/tf_linux64", "tf_linux64", 400)
+    (proc_root / "400" / "environ").write_bytes(b"SteamAppId=440\0")
+    reader = ProcessReader(proc_root)
+    resolver = WindowProcessResolver(
+        reader, create_application_resolver(proc_root, catalog=DesktopCatalog(directories=())),
+        observer=SteamProcessObserver(reader.list_pids),
+    )
+    runtime = build_runtime()
+    started = int(datetime(2026, 10, 1, 12, tzinfo=UTC).timestamp())
+    steam_window = build_window(190, "/window/steam", "Steam")
+    initial_groups = resolver.resolve((steam_window,), UID, sess_ident="graphical-session")
+    runtime.reconcile_windows(
+        "graphical-session", initial_groups, AtspiWindowSnapshot(windows=(steam_window,)), started, 0,
+    )
+    starts = runtime.create_process_events((), 0, started)
+    game_start = next(event for event in starts if event.application.ident == "steam:game:440")
+    assert game_start.application.name == "Steam game 440"
+    computer = Computer.objects.create(hostname="synthetic-late-steam-window", status="allowed")
+    account = Account.objects.create(computer=computer, uid=UID, collect=True)
+    content = b"".join(encode_event(event) for event in starts)
+    account.store_event_packet(parse_event_packet(content, hashlib.sha256(content).hexdigest()), len(content), None)
+
+    game_window = build_window(400, "/window/game", "Team Fortress 2").model_copy(update={"source": source})
+    windows = (steam_window, game_window)
+    groups = resolver.resolve(windows, UID, sess_ident="graphical-session")
+    observed = runtime.reconcile_windows("graphical-session", groups, AtspiWindowSnapshot(windows=windows), started + 10, 10)
+    updates = runtime.create_process_events(observed.ended, 0, started + 10)
+    assert observed.started == observed.ended == ()
+    assert len(updates) == 1
+    assert isinstance(updates[0], ProcessUpdateEvent)
+    assert updates[0].run_ident == game_start.run_ident
+    content = b"".join(encode_event(event) for event in updates)
+    packet = parse_event_packet(content, hashlib.sha256(content).hexdigest())
+    account.store_event_packet(packet, len(content), None)
+    assert not account.store_event_packet(packet, len(content), None)[1]
+
+    accounts = Account.objects.filter(pk=account.pk)
+    active = ActivityEvent.objects.build_report(accounts, date(2026, 10, 1), date(2026, 10, 2))
+    active_game = next(usage for usage in active.applications if usage.app_id == "steam:game:440")
+    assert active_game.name == "Team Fortress 2"
+    assert active_game.launches == 1
+    assert active_game.duration is None
+    suggestions = get_app_suggestions(account.activity_events.filter(type="prc_start"))
+
+    for form in (AppRuleForm(suggestions=suggestions), AccountAppForm(rules=(), rule_rows={}, suggestions=suggestions)):
+        assert ("steam:game:440", "Team Fortress 2") in form.fields["app_id"].widget.choices
+
+    runtime.reconcile_windows("graphical-session", groups, AtspiWindowSnapshot(windows=windows), started + 10, 0)
+    assert runtime.create_process_events((), 0, started + 10) == ()
+    groups = resolver.resolve((steam_window,), UID, sess_ident="graphical-session")
+    vanished = runtime.reconcile_windows(
+        "graphical-session", groups, AtspiWindowSnapshot(windows=(steam_window,)), started + 20, 10,
+    )
+    assert vanished.started == vanished.ended == ()
+    assert runtime.create_process_events((), 0, started + 20) == ()
+
+    rmtree(proc_root / "190")
+    rmtree(proc_root / "400")
+    ended_groups = resolver.resolve((), UID, sess_ident="graphical-session")
+    ended = runtime.reconcile_windows("graphical-session", ended_groups, AtspiWindowSnapshot(), started + 30, 10)
+    endings = runtime.create_process_events(ended.ended, 0, started + 30)
+    content = b"".join(encode_event(event) for event in endings)
+    account.store_event_packet(parse_event_packet(content, hashlib.sha256(content).hexdigest()), len(content), None)
+    report = ActivityEvent.objects.build_report(accounts, date(2026, 10, 1), date(2026, 10, 2))
+    game = next(usage for usage in report.applications if usage.app_id == "steam:game:440")
+    recent_game = next(usage for usage in report.recent if usage.app_id == "steam:game:440")
+    timeline = build_usage_timeline(accounts, started, started + 30)
+
+    assert game.name == recent_game.app_name == "Team Fortress 2"
+    assert game.duration == recent_game.duration == 30
+    assert game.launches == recent_game.launches == 1
+    assert timeline.applications[("Team Fortress 2", "steam:game:440")] == 30
+    assert account.activity_events.get(seq=game_start.seq).app_name == "Steam game 440"
+    assert account.activity_events.filter(type="prc_start", app_id="steam:game:440").count() == 1
 
 
 def test_groups_browser_style_workers_without_application_specific_names(
