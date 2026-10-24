@@ -29,6 +29,57 @@ BROWSER_CGROUP = (
 )
 
 
+def test_appimage_mounts_share_one_application_in_reports_and_restrictions(tmp_path: Path) -> None:
+    proc_root = tmp_path / "proc"
+    image = "/home/example/Applications/BambuStudio.AppImage"
+    app_id = f"appimage:{image}"
+    resolver = WindowProcessResolver(
+        ProcessReader(proc_root), create_application_resolver(proc_root, catalog=DesktopCatalog(directories=())),
+    )
+    runtime = build_runtime()
+    started = int(datetime(2026, 10, 1, 12, tzinfo=UTC).timestamp())
+    events = ()
+    observed_groups = []
+
+    for index, mount in enumerate(("/tmp/.mount_BambuS123456", "/tmp/.mount_BambuS654321")):
+        pid = 100 + index
+        write_process(proc_root, pid, 1, f"{mount}/usr/bin/bambustu_main", "bambustu_main", pid)
+        (proc_root / f"{pid}" / "environ").write_bytes(f"APPIMAGE={image}\0APPDIR={mount}\0".encode())
+        window = build_window(pid, f"/window/{pid}", "Synthetic Bambu Studio")
+        groups = resolver.resolve((window,), UID)
+        observed_groups.extend(groups)
+        timestamp = started + index * 120
+        runtime.reconcile_windows(
+            "graphical-session", groups, AtspiWindowSnapshot(windows=(window,)), timestamp, 0,
+        )
+        events += runtime.create_process_events((), 0, timestamp)
+        ended = runtime.reconcile_windows("graphical-session", (), AtspiWindowSnapshot(), timestamp + 60, 60)
+        events += runtime.create_process_events(ended.ended, 0, timestamp + 60)
+
+    content = b"".join(encode_event(event) for event in events)
+    computer = Computer.objects.create(hostname="synthetic-appimage", status="allowed")
+    account = Account.objects.create(computer=computer, uid=UID, collect=True)
+    account.store_event_packet(parse_event_packet(content, hashlib.sha256(content).hexdigest()), len(content), None)
+    report = ActivityEvent.objects.build_report(Account.objects.filter(pk=account.pk), date(2026, 10, 1), date(2026, 10, 2))
+
+    assert len(report.applications) == len(report.recent) == 1
+    assert report.applications[0].app_id == report.recent[0].app_id == app_id
+    assert report.applications[0].duration == report.recent[0].duration == 120
+    assert report.applications[0].launches == report.recent[0].launches == 2
+    assert {event.exe for event in account.activity_events.filter(type="prc_start")} == {
+        "/tmp/.mount_BambuS123456/usr/bin/bambustu_main", "/tmp/.mount_BambuS654321/usr/bin/bambustu_main",
+    }
+
+    limits = Limits.objects.create(name="Synthetic AppImage limits")
+    session_rule = SessionRule.objects.create(limits=limits, ident=1, name="Synthetic session")
+    rule = AppRule.objects.create(session_rule=session_rule, ident=1, name="Bambu Studio", max_time=0, app_id=app_id)
+    matcher = AppRuleMatcher(rule.build_client_config())
+    assert all(
+        matcher.matches(group.process.prc_name, group.process.exe, "", group.application.ident)
+        for group in observed_groups
+    )
+
+
 @pytest.mark.parametrize("source", ["ewmh", "process"])
 def test_non_accessible_steam_game_reaches_parent_statistics_as_its_own_application(tmp_path: Path, source: str) -> None:
     proc_root = tmp_path / "proc"
