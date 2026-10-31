@@ -24,15 +24,21 @@ from sanelib.protocol import (
     EndMeta,
     EventType,
     MAX_EVENTS_PER_PACKET,
+    ObservationSource,
+    ProcessEndEvent,
+    ProcessStartEvent,
+    ProcessStartMeta,
     SessionEndEvent,
     SessionStartEvent,
     SessionStartMeta,
     SyncRequest,
     SyncResponse,
     UpdateCommandPayload,
+    UsageInterval,
 )
 
 from sanea.core.models import (
+    Account,
     ActivityEvent,
     AppRule,
     ClientCommand,
@@ -48,6 +54,7 @@ from sanea.core.models import (
     SessionRule,
 )
 from sanea.core.services.registration_window import registration_window
+from sanea.core.services.activity_timeline import build_usage_timeline
 from sanea.network.server import ServerRunner, create_servers
 from sanea.core.models.prc_exclusion import DEFAULT_IGNORED_PRCS
 from sanex.accounting.app import AppQuota, AppRuleMatcher
@@ -1369,5 +1376,81 @@ def test_maximum_event_count_packet_crosses_real_network_boundary(
         assert not packet.path.exists()
         assert event_store.pending(4001) == ()
         await sync_to_async(_assert_maximum_packet_results)(hostname)
+
+    asyncio.run(exchange())
+
+
+def test_usage_intervals_cross_https_without_duplicate_time_or_filling_unobserved_hours(
+    running_sanea: _RunningSanea,
+    integration_state_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_sandbox_pki(monkeypatch)
+    hostname = "synthetic-interval-child"
+    uid = 5001
+    accounts = (DiscoveredAccount(uid=uid, login="child", name="Child"),)
+    sanex_root = integration_state_dir / "interval-sanex"
+    since = int(datetime(2026, 10, 29, 9, tzinfo=UTC).timestamp())
+    finished = since + 86_400 + 1_200
+    intervals = (
+        UsageInterval(timestamp=since + 4_200, duration=1_200),
+        UsageInterval(timestamp=finished, duration=1_200),
+    )
+
+    def assert_received_intervals() -> None:
+        connections.close_all()
+        account = Account.objects.get(computer__hostname=hostname, uid=uid)
+        endings = list(account.activity_events.filter(type__in=("session_end", "prc_end")))
+        expected_intervals = [interval.model_dump(mode="json") for interval in intervals]
+
+        assert len(endings) == 2
+        assert all(event.duration == 2_400 and event.intervals == expected_intervals for event in endings)
+        assert EventPacket.objects.filter(account=account).count() == 1
+
+        selected_accounts = Account.objects.filter(pk=account.pk)
+        historical = build_usage_timeline(selected_accounts, since, since + 7_200)
+        complete = build_usage_timeline(selected_accounts, since, finished)
+
+        assert historical.people == {None: (600, 600)}
+        assert historical.applications == {("Synthetic interval app", "/synthetic/interval-app"): 1_200}
+        assert complete.people == {None: (600, 600) + (0,) * 22 + (1_200,)}
+        assert complete.applications == {("Synthetic interval app", "/synthetic/interval-app"): 2_400}
+
+    async def exchange() -> None:
+        registered = await _register_sanex(running_sanea, sanex_root, accounts, hostname)
+        await sync_to_async(_enable_collection)((hostname,))
+        store = EventStore(sanex_root / "accounts")
+        store.recover(uid, 0)
+        events = (
+            SessionStartEvent(
+                seq=1, type=EventType.SESSION_START, timestamp=since - 2 * 86_400,
+                run_ident=1, sess_ident="synthetic-long-session", meta=SessionStartMeta(existing=True),
+            ),
+            ProcessStartEvent(
+                seq=2, type=EventType.PRC_START, timestamp=since, run_ident=2,
+                prc_name="Synthetic interval app", exe="/synthetic/interval-app",
+                meta=ProcessStartMeta(observed_via=ObservationSource.ATSPI),
+            ),
+            ProcessEndEvent(
+                seq=3, type=EventType.PRC_END, timestamp=finished, run_ident=2,
+                duration=2_400, intervals=intervals, meta=EndMeta(actor=Actor.USER),
+            ),
+            SessionEndEvent(
+                seq=4, type=EventType.SESSION_END, timestamp=finished, run_ident=1,
+                duration=2_400, intervals=intervals, meta=EndMeta(actor=Actor.USER),
+            ),
+        )
+
+        for event in events:
+            store.append(uid, event)
+
+        packet = store.seal(uid)
+        assert packet is not None
+
+        async with SyncHttpClient(registered.pki_paths.create_client_context()) as client:
+            assert await client.upload_events(running_sanea.base_url, packet) is EventUploadResult.SAVED
+            assert await client.upload_events(running_sanea.base_url, packet) is EventUploadResult.ALREADY_SAVED
+
+        await sync_to_async(assert_received_intervals)()
 
     asyncio.run(exchange())

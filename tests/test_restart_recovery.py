@@ -1,6 +1,7 @@
 """Cross-component persistence across a sanex service-process restart."""
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -20,14 +21,20 @@ from sanelib.protocol import (
     SessionRule,
     SessionStartEvent,
     SessionStartMeta,
+    UsageInterval,
+    encode_event,
+    parse_event_packet,
 )
 
+from sanea.core.models import ActivityEvent, Computer
+from sanea.core.services.activity_timeline import build_usage_timeline
 from sanex.accounting.app import AppQuota
 from sanex.accounting.policy import SessionDenial, SessionPolicyEvaluator
 from sanex.accounting.runtime import AccountRuntime
 from sanex.accounting.schedule import ScheduleResolver
 from sanex.accounting.session import SessionLimit, SessionQuota
 from sanex.service.runtime import RuntimeRepository
+from sanex.model.session import LoginSession, SessionState, SessionType
 from sanex.model.state import SessionRun
 from sanex.storage.config import ConfigStore
 from sanex.storage.events import EventStore
@@ -40,6 +47,67 @@ RANGE_IDENT = 11
 SESSION_RULE_IDENT = 17
 APP_RULE_IDENT = 23
 MONDAY_MORNING = int(datetime(2026, 10, 5, 9, tzinfo=UTC).timestamp())
+
+
+def test_restarted_session_intervals_reach_hourly_charts_without_filling_the_gap(tmp_path: Path) -> None:
+    config = build_config()
+    accounts_root = tmp_path / "accounts"
+    state_store = RuntimeStateStore(accounts_root)
+    event_store = EventStore(accounts_root)
+    repository = RuntimeRepository(state_store, event_store, "same-system-boot")
+    runtime = AccountRuntime(UID, repository.load(config.accounts[0], config.ident))
+    session = LoginSession(
+        ident="synthetic-long-login",
+        uid=UID,
+        login="synthetic-child",
+        path="/org/freedesktop/login1/session/synthetic",
+        started=MONDAY_MORNING - 3 * 86_400,
+        type=SessionType.WAYLAND,
+        state=SessionState.ACTIVE,
+        active=True,
+        idle=False,
+        locked=False,
+    )
+    started = runtime.reconcile_sessions((session,), MONDAY_MORNING, elapsed=0, existing=True)
+    event_store.append(UID, started.events[0])
+    runtime.reconcile_sessions((session,), MONDAY_MORNING + 1_200, elapsed=1_200)
+    runtime.state.observed_at = MONDAY_MORNING + 1_200
+    state_store.save(UID, runtime.state)
+
+    restarted_repository = RuntimeRepository(
+        RuntimeStateStore(accounts_root), EventStore(accounts_root), "same-system-boot",
+    )
+    restarted_runtime = AccountRuntime(UID, restarted_repository.load(config.accounts[0], config.ident))
+    resumed = MONDAY_MORNING + 25 * 3_600
+    restarted_runtime.reconcile_sessions((session,), resumed, elapsed=0, existing=True)
+    restarted_runtime.reconcile_sessions((session,), resumed + 1_200, elapsed=1_200)
+    ended = restarted_runtime.reconcile_sessions((), resumed + 1_200, elapsed=0)
+    content = b"".join(encode_event(event) for event in (*started.events, *ended.events))
+    packet = parse_event_packet(content, hashlib.sha256(content).hexdigest())
+    computer = Computer.objects.create(hostname="synthetic-interval-restart", status="allowed")
+    account = computer.accounts.create(uid=UID, login=session.login, collect=True)
+    account.store_event_packet(packet, len(content), None)
+    timeline = build_usage_timeline(computer.accounts.all(), MONDAY_MORNING, MONDAY_MORNING + 48 * 3_600)
+
+    assert ended.events[0].run_ident == started.events[0].seq
+    assert started.events[0].timestamp == session.started
+    assert ended.events[0].duration == 2_400
+    assert ended.events[0].intervals == (
+        UsageInterval(timestamp=MONDAY_MORNING + 1_200, duration=1_200),
+        UsageInterval(timestamp=resumed + 1_200, duration=1_200),
+    )
+    stored_end = ActivityEvent.objects.get(account=account, type="session_end")
+    assert stored_end.duration == 2_400
+    assert stored_end.intervals == [
+        {"timestamp": MONDAY_MORNING + 1_200, "duration": 1_200},
+        {"timestamp": resumed + 1_200, "duration": 1_200},
+    ]
+    expected_hours = [0] * 48
+    expected_hours[0] = 1_200
+    expected_hours[25] = 1_200
+    assert timeline.people == {None: tuple(expected_hours)}
+    assert sum(timeline.people[None]) == 2_400
+    assert timeline.applications == {}
 
 
 def test_recovers_complete_offline_state_and_continues_enforcement(
