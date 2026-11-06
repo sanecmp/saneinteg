@@ -83,6 +83,7 @@ async def scenario_client_and_server_exchange_snapshot_and_close_request() -> No
     task = asyncio.create_task(server.serve())
     client = WindowAgentClient(1001, "3", root_reader, root_writer)
 
+    await client.wait_ready()
     snapshot = await client.read_windows(login_session())
     accepted = await client.close_window(1001, "3", window)
     await client.close()
